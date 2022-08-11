@@ -1,30 +1,16 @@
-#include <maya/MFnPlugin.h>
 #include <maya/MTypeId.h> 
-
 #include <maya/MMatrix.h>
-#include <maya/MMatrixArray.h>
-#include <maya/MStringArray.h>
-#include <maya/MFloatArray.h>
 #include <maya/MDoubleArray.h>
 #include <maya/MPoint.h>
 #include <maya/MPointArray.h>
-
-#include <maya/MPxDeformerNode.h> 
-#include <maya/MFnMesh.h> 
 #include <maya/MItGeometry.h>
-#include <maya/MFnPointArrayData.h>
-#include <maya/MFnComponentListData.h>
 #include <maya/MItMeshVertex.h>
 #include <maya/MItSurfaceCV.h>
 #include <maya/MFnNurbsSurface.h>
-#include <maya/MWeight.h>
-
-#include <vector>
 
 #include "blurNoise.h"
-#include "OpenSimplex2F.h"
 
-const MTypeId blurNoise::id(0x00122706);
+const MTypeId blurNoise::id(0x00122712);
 void* blurNoise::creator() {return new blurNoise();}
 MStatus blurNoise::initialize() {return MStatus::kSuccess;}
 
@@ -94,6 +80,9 @@ MStatus blurNoise::deform(
 
 	MDataHandle hEnv = dataBlock.inputValue(envelope);
 	float env = hEnv.asFloat();
+    if (env == 0.0) {
+        return MStatus::kSuccess;
+    }
 	double time = 0;
 
 	// Maya automatically copies the input plug to the output plug
@@ -106,8 +95,12 @@ MStatus blurNoise::deform(
 
     auto outType = hOutput.type();
     if (outType == MFnData::kMesh) {
+
         MObject mesh = hOutput.asMesh();
         MItMeshVertex vertIter(mesh);
+        MPointArray newPts;
+        newPts.setLength(vertIter.count());
+        int pIdx = 0;
         for (; !vertIter.isDone(); vertIter.next()) {
             int idx = vertIter.index();
             float weight =  weightValue(dataBlock, multiIndex, idx);
@@ -119,8 +112,14 @@ MStatus blurNoise::deform(
             double offset = noise4_Classic(ose, osg, pos.x, pos.y, pos.z, time);
             MVector norm;
             vertIter.getNormal(norm, MSpace::kObject);
-            vertIter.setPosition(vertIter.position() + (norm * weight * offset));
+            newPts[pIdx++] = vertIter.position() + (norm * weight * offset * env);
         }
+        pIdx = 0;
+        vertIter.reset();
+        for (; !vertIter.isDone(); vertIter.next()) {
+            vertIter.setPosition(newPts[pIdx++]);
+        }
+
     }
     else if (outType == MFnData::kNurbsSurface) {
 
@@ -128,6 +127,8 @@ MStatus blurNoise::deform(
         MItSurfaceCV cvIter(surface);
         MFnNurbsSurface fnSurf(surface);
         MDoubleArray uParams, vParams;
+        MPointArray newPts;
+
         getSurfaceCVParams(fnSurf, uParams, vParams);
         for (; !cvIter.isDone(); cvIter.nextRow()) {
             for (; !cvIter.isRowDone(); cvIter.next()) {
@@ -144,11 +145,17 @@ MStatus blurNoise::deform(
                 double uParam = uParams[idxU];
                 double vParam = uParams[idxV];
                 MVector norm = fnSurf.normal(uParam, vParam, MSpace::kObject);
-                cvIter.setPosition(cvIter.position() + (norm * weight * offset));
+                newPts.append(cvIter.position() + (norm * weight * offset * env));
+            }
+        }
+        cvIter.reset();
+        int pIdx = 0;
+        for (; !cvIter.isDone(); cvIter.nextRow()) {
+            for (; !cvIter.isRowDone(); cvIter.next()) {
+                cvIter.setPosition(newPts[pIdx++]);
             }
         }
         cvIter.updateSurface();
-
     }
     return MStatus::kSuccess;
 }

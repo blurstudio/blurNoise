@@ -642,7 +642,7 @@ double _noise4_Base(OpenSimplexEnv *ose, OpenSimplexGradients *osg, double xs, d
 
 	// Consider opposing vertex pairs of the octahedron formed by the central cross-section of the stretched tesseract
 	double aabb = xsi + ysi - zsi - wsi, abab = xsi - ysi + zsi - wsi, abba = xsi - ysi - zsi + wsi;
-	double aabbScore = abs(aabb), ababScore = abs(abab), abbaScore = abs(abba);
+	double aabbScore = fabs(aabb), ababScore = fabs(abab), abbaScore = fabs(abba);
 
 	// Find the closest point on the stretched tesseract as if it were the upper half
 	int vertexIndex, via, vib;

@@ -1,4 +1,4 @@
-
+#pragma once
 
 typedef struct {
     int xsv, ysv;

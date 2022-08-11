@@ -1,3 +1,5 @@
+#pragma once
+
 #include <maya/MTypeId.h> 
 
 #include <maya/MMatrix.h>
@@ -8,6 +10,8 @@
 #include <maya/MFnNurbsSurface.h>
 
 #include "OpenSimplex2F.h"
+
+#define DEFORMER_NAME "blurNoise"
 
 class blurNoise : public MPxDeformerNode
 {
