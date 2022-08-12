@@ -9,8 +9,6 @@ find_package(OpenGL REQUIRED)
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_BINARY_DIR}/../output/maya/${MAYA_VERSION}/blur)
 
 set(SOURCE_FILES
-    "src/OpenSimplex2F.h"
-    "src/OpenSimplex2F.cpp"
     "src/blurNoise.h"
     "src/blurNoise.cpp"
     "src/pluginMain.cpp"
