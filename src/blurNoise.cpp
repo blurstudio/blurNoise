@@ -261,12 +261,12 @@ void blurNoise::getSurfaceCVParams(const MFnNurbsSurface &fnSurf, MDoubleArray &
 }
 
 blurNoise::blurNoise() {
-    fnSimplex = FastNoise::New<FastNoise::Simplex>();
-    fnFractal = FastNoise::New<FastNoise::FractalFBm>();
-    fnFractal->SetSource(fnSimplex);
-    fnFractal->SetOctaveCount(5);
+    ose = initOpenSimplex();
+    osg = newOpenSimplexGradients(ose, 1234);
 }
 blurNoise::~blurNoise() {
+    free(ose);
+    free(osg);
 }
 
 MStatus blurNoise::deform(
@@ -344,8 +344,10 @@ MStatus blurNoise::deform(
 	MDataHandle hOutput = dataBlock.outputValue(outPlug);
 
 
-    MPointArray allPts;
-    geoIter.allPositions(allPts, MSpace::kWorld);
+    MPointArray worldPts, localPts, newPts;
+    geoIter.allPositions(worldPts, MSpace::kWorld);
+    geoIter.allPositions(localPts, MSpace::kObject);
+    newPts.setLength(worldPts.length());
 
     // store the indices of all the geo we're looping over
     std::vector<int> allIdxs(geoIter.count());
@@ -398,39 +400,29 @@ MStatus blurNoise::deform(
         return MStatus::kFailure;
     }
 
-
-    MPointArray newPts;
-    std::vector<float> flatXPts(allPts.length());
-    std::vector<float> flatYPts(allPts.length());
-    std::vector<float> flatZPts(allPts.length());
-    std::vector<float> flatWPts(allPts.length());
-    std::vector<float> noiseVals(allPts.length());
-    newPts.setLength(allPts.length());
-    int pIdx = 0;
-
     // Copy the world data from the array-of-arrays mpoint array 
-    // into the multiple flat vectors
-    for (uint i=0; i<allPts.length(); ++i){
-        MPoint pos = allPts[i] * mat;
-        flatXPts[i] = (float)pos.x;
-        flatYPts[i] = (float)pos.y;
-        flatZPts[i] = (float)pos.z;
-        flatWPts[i] = time;
+    // into the multiple flat vectors, then run all the noise
+    // at once in parallel
+
+    std::vector<float> noiseVals(worldPts.length());
+    float scaleBase = 1.0;
+    float rangeBase = 1.0;
+    for (int octave = 0; octave < octaveCount; ++octave) {
+
+        #pragma omp parallel for
+        for (int i=0; i<(int)worldPts.length(); ++i){
+            MPoint pos = worldPts[i] * mat;
+            float n = (float)noise4_XYZBeforeW(ose, osg, pos.x*scaleBase, pos.y*scaleBase, pos.z*scaleBase, time);
+            noiseVals[i] += n / rangeBase;
+        }
+
+        scaleBase *= (float)octaveScaleBase;
+        rangeBase *= (float)octaveRangeBase;
     }
 
-    // Run all the noise
-    fnSimplex->GenPositionArray4D(
-        noiseVals.data(), allPts.length(),
-        flatXPts.data(), flatYPts.data(), flatZPts.data(), flatWPts.data(),
-        0, 0, 0, 0, 1234
-    );
-
-
-    MPointArray localPts;
-    geoIter.allPositions(localPts, MSpace::kObject);
 
     // Move the points based off the noise value
-    # pragma omp parallel for
+    //# pragma omp parallel for
     for (int idx=0; idx<allIdxs.size(); ++idx){
         float weight = allWeights[idx];
         if (weight == 0.0) {
@@ -438,22 +430,13 @@ MStatus blurNoise::deform(
             continue;
         }
 
-        double offset = 0.0;
-        double scaleBase = 1.0;
-        double rangeBase = 1.0;
+        double n = ((double)noiseVals[idx] * amp) + ampOffset;
+        if (ampUseClampHigh && n > ampClampHigh)
+            n = ampClampHigh;
+        if (ampUseClampLow && n < ampClampLow)
+            n = ampClampLow;
 
-        float n = noiseVals[idx];
-        offset += n / rangeBase;
-        scaleBase *= octaveScaleBase;
-        rangeBase *= octaveRangeBase;
-
-        offset = (offset * amp) + ampOffset;
-        if (ampUseClampHigh && offset > ampClampHigh)
-            offset = ampClampHigh;
-        if (ampUseClampLow && offset < ampClampLow)
-            offset = ampClampLow;
-
-        newPts[idx] = localPts[idx] + (allNorms[idx] * weight * offset * env);           
+        newPts[idx] = localPts[idx] + (allNorms[idx] * weight * n * env);           
     }
 
     geoIter.setAllPositions(newPts, MSpace::kObject);

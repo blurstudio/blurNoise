@@ -9,7 +9,7 @@
 #include <maya/MItGeometry.h>
 #include <maya/MFnNurbsSurface.h>
 
-#include <FastNoise/FastNoise.h>
+#include "OpenSimplex2F.h"
 
 #define DEFORMER_NAME "blurNoise"
 
@@ -80,6 +80,7 @@ private:
         MDoubleArray &vParams
     ) const;
 
-    FastNoise::SmartNode<FastNoise::Simplex> fnSimplex;
-    FastNoise::SmartNode<FastNoise::FractalFBm> fnFractal;
+    OpenSimplexEnv *ose;
+    OpenSimplexGradients *osg;
+
 };

@@ -12,6 +12,7 @@ MStatus initializePlugin(MObject obj) {
         blurNoise::initialize,
         MPxNode::kDeformerNode
     );
+    MGlobal::executeCommand("makePaintable -attrType \"multiFloat\" -sm \"deformer\" \"" DEFORMER_NAME "\" \"weights\";");
 	return result;
 }
 
