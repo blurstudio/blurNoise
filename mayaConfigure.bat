@@ -14,6 +14,6 @@ cmake ^
     -DMAYA_VERSION=%MAYA_VERSION% ^
     -G "%COMPILER%" ..\
 
-cmake --build . --config Debug --target INSTALL
+REM cmake --build . --config Debug --target INSTALL
 
 pause

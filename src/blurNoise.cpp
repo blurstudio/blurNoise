@@ -23,7 +23,6 @@
 
 #include "blurNoise.h"
 
-
 MObject blurNoise::aAmp;
 MObject blurNoise::aAmpOffset;
 MObject blurNoise::aAmpClampHigh;
@@ -262,12 +261,12 @@ void blurNoise::getSurfaceCVParams(const MFnNurbsSurface &fnSurf, MDoubleArray &
 }
 
 blurNoise::blurNoise() {
-    ose = initOpenSimplex();
-    osg = newOpenSimplexGradients(ose, 1234);
+    fnSimplex = FastNoise::New<FastNoise::Simplex>();
+    fnFractal = FastNoise::New<FastNoise::FractalFBm>();
+    fnFractal->SetSource(fnSimplex);
+    fnFractal->SetOctaveCount(5);
 }
 blurNoise::~blurNoise() {
-    free(ose);
-    free(osg);
 }
 
 MStatus blurNoise::deform(
@@ -286,7 +285,7 @@ MStatus blurNoise::deform(
 
     // Get the time input
     MDataHandle hTime = dataBlock.inputValue(aTime);
-    double time = hTime.asTime().asUnits(MTime::kSeconds);
+    float time = (float)hTime.asTime().asUnits(MTime::kSeconds);
 
 
     // Get the octave loop data
@@ -296,7 +295,7 @@ MStatus blurNoise::deform(
     int octaveCount = hOctaveCount.asInt();
     double octaveScaleBase = 1.0 / hOctaveScaleBase.asDouble();
     double octaveRangeBase = 1.0 / hOctaveRangeBase.asDouble();
-
+    //if (octaveCount > 1) {fnFractal->SetOctaveCount(octaveCount); }
 
     // Get the amplitude data
     MDataHandle hAmp = dataBlock.inputValue(aAmp);
@@ -337,7 +336,6 @@ MStatus blurNoise::deform(
     mtm.setShear(shear, MSpace::kWorld);
     MMatrix mat = mtm.asMatrixInverse();
 
-
 	// Maya automatically copies the input plug to the output plug
 	// and then gives you an iterator over that
 	// So get the OUTPUT handle for this mutiIndex
@@ -346,108 +344,118 @@ MStatus blurNoise::deform(
 	MDataHandle hOutput = dataBlock.outputValue(outPlug);
 
 
+    MPointArray allPts;
+    geoIter.allPositions(allPts, MSpace::kWorld);
 
+    // store the indices of all the geo we're looping over
+    std::vector<int> allIdxs(geoIter.count());
+    std::vector<float> allWeights(geoIter.count());
+    for (; !geoIter.isDone(); geoIter.next()) {
+        int pi = geoIter.positionIndex();
+        int idx = geoIter.index();
+        allIdxs[pi] = idx;
+        allWeights[pi] = weightValue(dataBlock, multiIndex, idx);
+    }
+    geoIter.reset();
+
+
+    // Get the per-point normals in object space
+    MFloatVectorArray allNorms;
+    allNorms.setLength(geoIter.count());
     auto outType = hOutput.type();
     if (outType == MFnData::kMesh) {
-
         MObject mesh = hOutput.asMesh();
         MFnMesh meshFn(mesh);
-        MFloatVectorArray norms;
-        meshFn.getVertexNormals(false, norms);
-
-
-        MItMeshVertex vertIter(mesh);
-        MPointArray newPts;
-        newPts.setLength(vertIter.count());
-        int pIdx = 0;
-        for (; !vertIter.isDone(); vertIter.next()) {
-            int idx = vertIter.index();
-            float weight =  weightValue(dataBlock, multiIndex, idx);
-            if (weight == 0.0) {
-                continue;
-            }
-
-            MPoint pos = vertIter.position(MSpace::kWorld, &status) * mat;
-            double offset = 0.0;
-            double scaleBase = 1.0;
-            double rangeBase = 1.0;
-            for (int oIdx=0; oIdx<octaveCount; ++oIdx){
-                //double n = noise4_Classic(ose, osg, pos.x*scaleBase, pos.y*scaleBase, pos.z*scaleBase, time);
-                double n = noise4_XYZBeforeW(ose, osg, pos.x*scaleBase, pos.y*scaleBase, pos.z*scaleBase, time);
-                offset += n / rangeBase;
-                scaleBase *= octaveScaleBase;
-                rangeBase *= octaveRangeBase;
-            }
-            offset = (offset * amp) + ampOffset;
-            if (ampUseClampHigh && offset > ampClampHigh)
-                offset = ampClampHigh;
-            if (ampUseClampLow && offset < ampClampLow)
-                offset = ampClampLow;
-
-            //MVector norm;
-            //vertIter.getNormal(norm, MSpace::kObject);
-            newPts[pIdx++] = vertIter.position() + (norms[idx] * weight * offset * env);
+        MFloatVectorArray tnorms;
+        meshFn.getVertexNormals(false, tnorms);
+        // match the norms array to the allpts array
+        int i = 0;
+        for (const int &idx: allIdxs){
+            allNorms[i++] = tnorms[idx];
         }
-        pIdx = 0;
-        vertIter.reset();
-        for (; !vertIter.isDone(); vertIter.next()) {
-            vertIter.setPosition(newPts[pIdx++]);
-        }
-
     }
     else if (outType == MFnData::kNurbsSurface) {
-
         MObject surface = hOutput.asNurbsSurface();
-        MItSurfaceCV cvIter(surface);
         MFnNurbsSurface fnSurf(surface);
         MDoubleArray uParams, vParams;
-        MPointArray newPts;
-
         getSurfaceCVParams(fnSurf, uParams, vParams);
-        for (; !cvIter.isDone(); cvIter.nextRow()) {
-            for (; !cvIter.isRowDone(); cvIter.next()) {
-                int idxU, idxV;
-                int idx = cvIter.index();
-                cvIter.getIndex(idxU, idxV);
-                float weight =  weightValue(dataBlock, multiIndex, idx);
-                if (weight == 0.0) {
-                    continue;
-                }
-
-
-
-                MPoint pos = cvIter.position(MSpace::kWorld, &status) * mat;
-                double offset = 0.0;
-                double scaleBase = 1.0;
-                double rangeBase = 1.0;
-                for (int oIdx=0; oIdx<octaveCount; ++oIdx){
-                    double n = noise4_Classic(ose, osg, pos.x*scaleBase, pos.y*scaleBase, pos.z*scaleBase, time);
-                    offset += n / rangeBase;
-                    scaleBase *= octaveScaleBase;
-                    rangeBase *= octaveRangeBase;
-                }
-                offset = (offset * amp) + ampOffset;
-                if (ampUseClampHigh && offset > ampClampHigh)
-                    offset = ampClampHigh;
-                if (ampUseClampLow && offset < ampClampLow)
-                    offset = ampClampLow;
-
-
-
-                double uParam = uParams[idxU];
-                double vParam = uParams[idxV];
-                MVector norm = fnSurf.normal(uParam, vParam, MSpace::kObject);
-                newPts.append(cvIter.position() + (norm * weight * offset * env));
+        int i = 0;
+        // It's possible to do this without the tnorms
+        // but this works well enough in practice
+        MFloatVectorArray tnorms;
+        for (const double &u: uParams){
+            for (const double &v: vParams){
+                tnorms[i++] = fnSurf.normal(u, v, MSpace::kObject);
             }
         }
-        cvIter.reset();
-        int pIdx = 0;
-        for (; !cvIter.isDone(); cvIter.nextRow()) {
-            for (; !cvIter.isRowDone(); cvIter.next()) {
-                cvIter.setPosition(newPts[pIdx++]);
-            }
+        int idx = 0;
+        for (const int &idx: allIdxs){
+            allNorms[i++] = tnorms[idx];
         }
-        cvIter.updateSurface();
     }
+    else {
+        // Only mesh and nurbs supported
+        return MStatus::kFailure;
+    }
+
+
+    MPointArray newPts;
+    std::vector<float> flatXPts(allPts.length());
+    std::vector<float> flatYPts(allPts.length());
+    std::vector<float> flatZPts(allPts.length());
+    std::vector<float> flatWPts(allPts.length());
+    std::vector<float> noiseVals(allPts.length());
+    newPts.setLength(allPts.length());
+    int pIdx = 0;
+
+    // Copy the world data from the array-of-arrays mpoint array 
+    // into the multiple flat vectors
+    for (uint i=0; i<allPts.length(); ++i){
+        MPoint pos = allPts[i] * mat;
+        flatXPts[i] = (float)pos.x;
+        flatYPts[i] = (float)pos.y;
+        flatZPts[i] = (float)pos.z;
+        flatWPts[i] = time;
+    }
+
+    // Run all the noise
+    fnSimplex->GenPositionArray4D(
+        noiseVals.data(), allPts.length(),
+        flatXPts.data(), flatYPts.data(), flatZPts.data(), flatWPts.data(),
+        0, 0, 0, 0, 1234
+    );
+
+
+    MPointArray localPts;
+    geoIter.allPositions(localPts, MSpace::kObject);
+
+    // Move the points based off the noise value
+    # pragma omp parallel for
+    for (int idx=0; idx<allIdxs.size(); ++idx){
+        float weight = allWeights[idx];
+        if (weight == 0.0) {
+            newPts[idx] = localPts[idx];
+            continue;
+        }
+
+        double offset = 0.0;
+        double scaleBase = 1.0;
+        double rangeBase = 1.0;
+
+        float n = noiseVals[idx];
+        offset += n / rangeBase;
+        scaleBase *= octaveScaleBase;
+        rangeBase *= octaveRangeBase;
+
+        offset = (offset * amp) + ampOffset;
+        if (ampUseClampHigh && offset > ampClampHigh)
+            offset = ampClampHigh;
+        if (ampUseClampLow && offset < ampClampLow)
+            offset = ampClampLow;
+
+        newPts[idx] = localPts[idx] + (allNorms[idx] * weight * offset * env);           
+    }
+
+    geoIter.setAllPositions(newPts, MSpace::kObject);
     return MStatus::kSuccess;
 }
