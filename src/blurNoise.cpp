@@ -395,6 +395,16 @@ MStatus blurNoise::deform(
             allNorms[i++] = tnorms[idx];
         }
     }
+    else if (outType == MFnData::kNurbsCurve) {
+        // Get the transform in objects space, and we go in the +- y direction
+        MMatrix inSpace = wmat.inverse() * mtm.asMatrix();
+        MVector inSpaceNormD(inSpace[1]);
+        MFloatVector inSpaceNorm(inSpaceNormD);
+
+        for (int i = 0; i < allNorms.length(); ++i){
+            allNorms[i] = inSpaceNorm;
+        }
+    }
     else {
         // Only mesh and nurbs supported
         return MStatus::kFailure;
