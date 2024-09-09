@@ -1,10 +1,11 @@
 #include <maya/MFnPlugin.h>
 #include <maya/MGlobal.h>
 #include "blurNoise.h"
+#include "version.h"
 
 MStatus initializePlugin(MObject obj) {
 	MStatus result;
-	MFnPlugin plugin(obj, "Blur Studio", "1.0", "Any");
+	MFnPlugin plugin(obj, "Blur Studio", VERSION_STRING, "Any");
 	result = plugin.registerNode(
         DEFORMER_NAME,
         blurNoise::id,
